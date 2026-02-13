@@ -1,0 +1,5 @@
+Pillow
+pytesseract
+tensorflow
+opencv-python
+tf-keras
