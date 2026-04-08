@@ -136,15 +136,19 @@ class AutoGraderApp:
             from hebhtr_wrapper import HebrewOCR
             
             # Predict
-            text = HebrewOCR.predict(self.current_image)
+            # Using predict_full_page to handle segmentation of words
+            # Debug=True to show segmentation boxes
+            text = HebrewOCR.predict_full_page(self.current_image, debug=True)
             
-            self.log("--- HebHTR RESULT ---")
+            self.log("--- HebHTR RESULT (Segmented) ---")
             self.log(f"{text}")
-            self.log("---------------------")
+            self.log("---------------------------------")
             
-        except ImportError:
-            self.log("ERROR: Missing dependencies (tensorflow, opencv).")
-            messagebox.showerror("Missing Dependencies", "Please install tensorflow and opencv-python.\npip install tensorflow opencv-python")
+        except ImportError as e:
+            self.log(f"ERROR: Import failed: {e}")
+            import traceback
+            traceback.print_exc()
+            messagebox.showerror("Import Error", f"Failed to import dependencies.\nError: {e}\n\nPlease ensure you are running in the correct environment.")
         except Exception as e:
             self.log(f"HebHTR Error: {e}")
             import traceback
