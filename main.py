@@ -23,7 +23,10 @@ class AutoGraderApp:
         btn_load = tk.Button(top_frame, text="Select Image", command=self.load_image)
         btn_load.pack(side=tk.LEFT, padx=10)
 
-        self.btn_scan = tk.Button(top_frame, text="Scan (HebHTR)", command=self.process_image, state=tk.DISABLED, bg="#dddddd")
+        self.btn_segment = tk.Button(top_frame, text="View Segmentation", command=lambda: self.process_image(run_ocr=False), state=tk.DISABLED, bg="#dddddd")
+        self.btn_segment.pack(side=tk.LEFT, padx=10)
+
+        self.btn_scan = tk.Button(top_frame, text="Run Full OCR", command=lambda: self.process_image(run_ocr=True), state=tk.DISABLED, bg="#dddddd")
         self.btn_scan.pack(side=tk.LEFT, padx=10)
 
         # Main Content Area (Split: Left=Image, Right=Text)
@@ -48,18 +51,17 @@ class AutoGraderApp:
         
         if file_path:
             try:
+                self.current_image_path = file_path
                 self.current_image = Image.open(file_path)
                 
                 # Display logic
-                display_h = 600
-                ratio = display_h / self.current_image.height
-                display_w = int(self.current_image.width * ratio)
-                
-                resized = self.current_image.copy().resize((display_w, display_h))
+                resized = self.current_image.copy()
+                resized.thumbnail((550, 700))
                 self.photo_image = ImageTk.PhotoImage(resized)
                 
                 self.image_label.config(image=self.photo_image, text="")
                 self.btn_scan.config(state=tk.NORMAL, bg="#4CAF50", fg="white")
+                self.btn_segment.config(state=tk.NORMAL, bg="#2196F3", fg="white")
                 self.log("Image loaded successfully.")
                 
             except Exception as e:
@@ -69,22 +71,80 @@ class AutoGraderApp:
         self.text_output.insert(tk.END, f"\n{message}")
         self.text_output.see(tk.END)
 
-    def process_image(self):
+    def process_image(self, run_ocr=True):
         if not self.current_image:
             return
 
-        self.log("Starting HebHTR (Hebrew Handwriting)...")
+        if run_ocr:
+            self.log("Starting HebHTR (Hebrew Handwriting Full OCR)...")
+        else:
+            self.log("Starting Segmentation (Skipping OCR)...")
         self.root.update()
         
         try:
             from hebhtr_wrapper import HebrewOCR
             
-            # Debug=True to show segmentation boxes
-            text = HebrewOCR.predict_full_page(self.current_image, debug=True)
+            # return_annotated=True to get the image with segmentation boxes
+            text, annotated_image, boxes_data = HebrewOCR.predict_full_page(self.current_image, return_annotated=True, run_ocr=run_ocr)
+            
+            # Format text for Tkinter Right-To-Left display
+            display_text = text
+            if run_ocr and text and not text.startswith("["):
+                # Put each word on a new line for debugging word character order
+                display_text = "\n".join(text.split(" "))
+                try:
+                    from bidi.algorithm import get_display
+                    # get_display will still work per line
+                    display_text = "\n".join(get_display(line) for line in display_text.split("\n"))
+                except ImportError:
+                    pass
             
             self.log("--- HebHTR RESULT ---")
-            self.log(f"{text}")
+            self.log(f"{display_text}")
             self.log("---------------------")
+
+            # Save boxes to output folder
+            if hasattr(self, 'current_image_path') and self.current_image_path:
+                img_dir = os.path.dirname(self.current_image_path)
+                out_dir = os.path.join(img_dir, "output")
+                os.makedirs(out_dir, exist_ok=True)
+                
+                base_name = os.path.splitext(os.path.basename(self.current_image_path))[0]
+                out_file = os.path.join(out_dir, f"{base_name}_coordinates.txt")
+                
+                boxes_text_lines = []
+                crops_dir = os.path.join(out_dir, f"{base_name}_crops")
+                os.makedirs(crops_dir, exist_ok=True)
+                
+                for b in boxes_data:
+                    lx, ly, lw, lh = b['box']
+                    L = b['line']
+                    W = b['word']
+                    boxes_text_lines.append(f"Line {L}, Word {W}: x={lx}, y={ly}, w={lw}, h={lh}")
+                    
+                    crop_box = (lx, ly, lx + lw, ly + lh)
+                    word_crop = self.current_image.crop(crop_box)
+                    crop_file = os.path.join(crops_dir, f"L{L}_W{W}.png")
+                    word_crop.save(crop_file)
+                
+                with open(out_file, "w", encoding="utf-8") as f:
+                    f.write("\n".join(boxes_text_lines))
+                
+                out_text_file = os.path.join(out_dir, f"{base_name}_text.txt")
+                with open(out_text_file, "w", encoding="utf-8") as f:
+                    f.write(text)
+                
+                self.log(f"Saved coordinates to: {os.path.basename(out_file)}")
+                self.log(f"Saved text output to: {os.path.basename(out_text_file)}")
+                self.log(f"Saved {len(boxes_data)} crop images to: {os.path.basename(crops_dir)}")
+            
+            # Display annotated image
+            if annotated_image:
+                resized = annotated_image.copy()
+                resized.thumbnail((550, 700))
+                self.photo_image = ImageTk.PhotoImage(resized)
+                self.image_label.config(image=self.photo_image, text="")
+                
             
         except ImportError as e:
             self.log(f"ERROR: Import failed: {e}")

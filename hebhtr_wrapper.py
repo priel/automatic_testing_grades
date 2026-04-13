@@ -67,14 +67,15 @@ class HebrewOCR:
         return recognized[0]
 
     @staticmethod
-    def predict_full_page(image_pil, debug=False):
+    def predict_full_page(image_pil, return_annotated=False, run_ocr=True):
         """
         Predict Hebrew text from a full-page PIL Image by segmenting it into words.
         Args:
             image_pil: PIL.Image object
-            debug: bool, if True show popup with boxes
+            return_annotated: bool, if True returns (text, annotated_pil_image, boxes_data)
+            run_ocr: bool, if False, skips text recognition and just returns the annotated image
         Returns:
-            str: Decoded text (space-separated words)
+            str: Decoded text (space-separated words) OR tuple IF return_annotated is True
         """
         # Lazy import
         try:
@@ -83,6 +84,8 @@ class HebrewOCR:
             import segmentation
             segment_into_words = segmentation.segment_into_words
         
+        # Ensure image is RGB to avoid Palette-mode color flipping
+        image_pil = image_pil.convert('RGB')
         img_np = np.array(image_pil)
         
         try:
@@ -94,10 +97,10 @@ class HebrewOCR:
         if not segment_results:
             return "[No text found]"
         
-        # --- DEBUG VISUALIZATION (Lines) ---
-        if debug:
-            # Group words back into lines for visualization
-            # We know they are sorted. We can group by Y proximity.
+        annotated_img_pil = None
+        boxes_text = ""
+        if return_annotated:
+            # Group words back into lines for visualization to color code them
             lines_of_boxes = []
             if segment_results:
                 current_line_boxes = [segment_results[0][1]]
@@ -113,46 +116,38 @@ class HebrewOCR:
                         current_line_boxes = [box]
                 lines_of_boxes.append(current_line_boxes)
 
-            # Show each line
-            print(f"Debug: Detected {len(lines_of_boxes)} lines.")
-            img_bgr = img_np.copy()
-            if len(img_bgr.shape) == 2:
-                img_bgr = cv2.cvtColor(img_bgr, cv2.COLOR_GRAY2BGR)
-            elif len(img_bgr.shape) == 3 and img_bgr.shape[2] == 3:
-                img_bgr = cv2.cvtColor(img_bgr, cv2.COLOR_RGB2BGR)
+            # Draw
+            # img_np is RGB from PIL.Image
+            img_draw = img_np.copy()
+            if len(img_draw.shape) == 2:
+                img_draw = cv2.cvtColor(img_draw, cv2.COLOR_GRAY2RGB)
+            elif len(img_draw.shape) == 3 and img_draw.shape[2] == 4:
+                img_draw = cv2.cvtColor(img_draw, cv2.COLOR_RGBA2RGB)
 
+            # RGB Colors for different lines
+            colors = [(255,0,0), (0,255,0), (0,0,255), (255,255,0), (255,0,255), 
+                      (0,255,255), (128,0,255), (255,128,0), (0,128,128), (128,128,0)]
+
+            boxes_data = []
             for line_idx, line_boxes in enumerate(lines_of_boxes):
-                # Calculate bounding box of the whole line
-                min_x = min(b[0] for b in line_boxes)
-                min_y = min(b[1] for b in line_boxes)
-                max_x = max(b[0] + b[2] for b in line_boxes)
-                max_y = max(b[1] + b[3] for b in line_boxes)
-                
-                # Crop and show loop
-                line_img = img_bgr[min_y:max_y, min_x:max_x].copy()
-                
-                # Draw boxes for words in this line
-                for (lx, ly, lw, lh) in line_boxes:
-                    # Adjust coordinates to be relative to the line crop
-                    cv2.rectangle(line_img, (lx - min_x, ly - min_y), (lx - min_x + lw, ly - min_y + lh), (0, 0, 255), 1)
-
-                title = f"Debug: Line {line_idx+1}/{len(lines_of_boxes)}"
-                cv2.imshow(title, line_img)
-                print(f"Showing Line {line_idx+1}. Press 'q' to quit debug, any other key to continue...")
-                
-                key = cv2.waitKey(0) # Wait for key
-                
-                try:
-                    cv2.destroyWindow(title)
-                except Exception:
-                    # Window likely closed by user
-                    pass
-                
-                if key & 0xFF == ord('q'):
-                    break
-
-            cv2.destroyAllWindows()
+                color = colors[line_idx % len(colors)]
+                for word_idx, (lx, ly, lw, lh) in enumerate(line_boxes):
+                    cv2.rectangle(img_draw, (lx, ly), (lx + lw, ly + lh), color, 2)
+                    boxes_data.append({
+                        "line": line_idx + 1,
+                        "word": word_idx + 1,
+                        "box": (lx, ly, lw, lh)
+                    })
+            
+            import PIL.Image
+            annotated_img_pil = PIL.Image.fromarray(img_draw)
         # ---------------------------
+
+        if not run_ocr:
+            final_text = "[OCR Skipped - Displaying Segmentation Only]"
+            if return_annotated:
+                return final_text, annotated_img_pil, boxes_data
+            return final_text
 
         img_gray_crops = [x[0] for x in segment_results]
         
@@ -172,4 +167,7 @@ class HebrewOCR:
         recognized_texts = model.inferBatch(batch, True)[0] 
         
         final_text = " ".join(recognized_texts)
+        
+        if return_annotated:
+            return final_text, annotated_img_pil, boxes_data
         return final_text

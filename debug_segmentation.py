@@ -24,6 +24,9 @@ def debug_pipeline(image_path):
 
     out_dir = os.path.join(os.path.dirname(image_path), "debug")
     os.makedirs(out_dir, exist_ok=True)
+    
+    debug_word_dir = os.path.join(os.path.dirname(image_path), "debug_word")
+    os.makedirs(debug_word_dir, exist_ok=True)
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
@@ -71,6 +74,10 @@ def debug_pipeline(image_path):
             gx, gy = lx + wx, ly + wy
             cv2.rectangle(words_img, (gx, gy), (gx+ww, gy+wh), color, 1)
             total_words += 1
+            
+            # Save the individual word crop
+            word_filename = os.path.join(debug_word_dir, f"L{i+1}_W{j+1}.png")
+            cv2.imwrite(word_filename, word_crop)
 
         cv2.imwrite(os.path.join(out_dir, f"step2_line{i+1}_words.png"), line_debug)
 
