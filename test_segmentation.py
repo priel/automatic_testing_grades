@@ -25,16 +25,21 @@ def test_segmentation():
     print("Running segmentation...")
     results = segment_into_words(img)
     
-    count = len(results)
-    print(f"Detected {count} words.")
+    line_count = len(results)
+    flat_results = [word for line in results for word in line]
+    word_count = len(flat_results)
     
-    if count == 5:
+    print(f"Detected {line_count} lines and {word_count} total words.")
+    
+    if word_count == 5:
         print("PASS: Correct number of words detected.")
     else:
-        print(f"FAIL: Expected 5 words, detected {count}.")
+        print(f"FAIL: Expected 5 words, detected {word_count}.")
 
-    for i, (crop, box) in enumerate(results):
-        print(f"Word {i}: Box {box}")
+    for i, line in enumerate(results):
+        print(f"Line {i+1}:")
+        for j, (crop, box) in enumerate(line):
+            print(f"  Word {j+1}: Box {box}")
 
 if __name__ == "__main__":
     test_segmentation()

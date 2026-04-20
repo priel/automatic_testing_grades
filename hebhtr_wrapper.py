@@ -64,7 +64,9 @@ class HebrewOCR:
         model = HebrewOCR.get_model()
         recognized = model.inferBatch(batch, True)[0] # Returns tuple (texts, probs)
         
-        return recognized[0]
+        recognized_text = recognized[0]
+        # Reverse visual order to logical order (L-to-R scanning returns R-to-L letters in visual sequence)
+        return recognized_text[::-1]
 
     @staticmethod
     def predict_full_page(image_pil, return_annotated=False, run_ocr=True):
@@ -99,24 +101,9 @@ class HebrewOCR:
         
         annotated_img_pil = None
         boxes_text = ""
+        boxes_data = []
+        
         if return_annotated:
-            # Group words back into lines for visualization to color code them
-            lines_of_boxes = []
-            if segment_results:
-                current_line_boxes = [segment_results[0][1]]
-                for i in range(1, len(segment_results)):
-                    box = segment_results[i][1] # (x,y,w,h)
-                    prev_box = current_line_boxes[-1]
-                    
-                    # If Y diff is small, same line
-                    if abs(box[1] - prev_box[1]) < 20: 
-                        current_line_boxes.append(box)
-                    else:
-                        lines_of_boxes.append(current_line_boxes)
-                        current_line_boxes = [box]
-                lines_of_boxes.append(current_line_boxes)
-
-            # Draw
             # img_np is RGB from PIL.Image
             img_draw = img_np.copy()
             if len(img_draw.shape) == 2:
@@ -128,10 +115,9 @@ class HebrewOCR:
             colors = [(255,0,0), (0,255,0), (0,0,255), (255,255,0), (255,0,255), 
                       (0,255,255), (128,0,255), (255,128,0), (0,128,128), (128,128,0)]
 
-            boxes_data = []
-            for line_idx, line_boxes in enumerate(lines_of_boxes):
+            for line_idx, line_results in enumerate(segment_results):
                 color = colors[line_idx % len(colors)]
-                for word_idx, (lx, ly, lw, lh) in enumerate(line_boxes):
+                for word_idx, (word_crop, (lx, ly, lw, lh)) in enumerate(line_results):
                     cv2.rectangle(img_draw, (lx, ly), (lx + lw, ly + lh), color, 2)
                     boxes_data.append({
                         "line": line_idx + 1,
@@ -141,6 +127,15 @@ class HebrewOCR:
             
             import PIL.Image
             annotated_img_pil = PIL.Image.fromarray(img_draw)
+        else:
+            # Still need boxes_data for the coordinate export in main.py
+            for line_idx, line_results in enumerate(segment_results):
+                for word_idx, (word_crop, (lx, ly, lw, lh)) in enumerate(line_results):
+                    boxes_data.append({
+                        "line": line_idx + 1,
+                        "word": word_idx + 1,
+                        "box": (lx, ly, lw, lh)
+                    })
         # ---------------------------
 
         if not run_ocr:
@@ -149,7 +144,13 @@ class HebrewOCR:
                 return final_text, annotated_img_pil, boxes_data
             return final_text
 
-        img_gray_crops = [x[0] for x in segment_results]
+        # Flatten segment_results for OCR batch processing
+        img_gray_crops = []
+        line_word_counts = []
+        for line in segment_results:
+            line_word_counts.append(len(line))
+            for word_crop, _ in line:
+                img_gray_crops.append(word_crop)
         
         # Preprocess all crops
         target_size = (128, 32)
@@ -165,8 +166,18 @@ class HebrewOCR:
         
         model = HebrewOCR.get_model()
         recognized_texts = model.inferBatch(batch, True)[0] 
+        # Reverse each word from visual to logical
+        recognized_texts = [text[::-1] for text in recognized_texts]
         
-        final_text = " ".join(recognized_texts)
+        # Reconstruct lines with newlines
+        final_lines = []
+        current_idx = 0
+        for count in line_word_counts:
+            line_words = recognized_texts[current_idx : current_idx + count]
+            final_lines.append(" ".join(line_words))
+            current_idx += count
+        
+        final_text = "\n".join(final_lines)
         
         if return_annotated:
             return final_text, annotated_img_pil, boxes_data

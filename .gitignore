@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.venv/
+env/
+.env
+.antigravity_brain/
+**/output/
+temp_*/
+tmp_out.txt
+*.png
+!examples/sample.png
+!examples/\u05e4\u05d5\u05e0\u05d8-\u05db\u05ea\u05d1-\u05d9\u05d3.png

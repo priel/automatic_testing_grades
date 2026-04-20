@@ -26,8 +26,11 @@ class AutoGraderApp:
         self.btn_segment = tk.Button(top_frame, text="View Segmentation", command=lambda: self.process_image(run_ocr=False), state=tk.DISABLED, bg="#dddddd")
         self.btn_segment.pack(side=tk.LEFT, padx=10)
 
-        self.btn_scan = tk.Button(top_frame, text="Run Full OCR", command=lambda: self.process_image(run_ocr=True), state=tk.DISABLED, bg="#dddddd")
+        self.btn_scan = tk.Button(top_frame, text="Run Full OCR (Local)", command=lambda: self.process_image(run_ocr=True), state=tk.DISABLED, bg="#dddddd")
         self.btn_scan.pack(side=tk.LEFT, padx=10)
+
+        self.btn_gemini = tk.Button(top_frame, text="Run Gemini OCR (Cloud)", command=self.run_gemini_ocr, state=tk.DISABLED, bg="#dddddd")
+        self.btn_gemini.pack(side=tk.LEFT, padx=10)
 
         # Main Content Area (Split: Left=Image, Right=Text)
         content_frame = tk.Frame(self.root)
@@ -38,9 +41,13 @@ class AutoGraderApp:
         self.image_label.pack(side=tk.LEFT, expand=True, fill=tk.BOTH, padx=(0, 5))
 
         # Right: Output Text
-        self.text_output = scrolledtext.ScrolledText(content_frame, width=40, font=("Consolas", 10))
+        self.text_output = scrolledtext.ScrolledText(content_frame, width=40, font=("Consolas", 12))
         self.text_output.pack(side=tk.RIGHT, expand=True, fill=tk.BOTH)
-        self.text_output.insert(tk.END, "Status: Ready to load image...\n")
+        
+        # Configure right alignment tag for Hebrew
+        self.text_output.tag_configure("right", justify='right')
+        
+        self.text_output.insert(tk.END, "Status: Ready to load image...\n", "right")
         self.log("Mode: Hebrew Handwriting Recognition (HebHTR)")
 
     def load_image(self):
@@ -62,13 +69,14 @@ class AutoGraderApp:
                 self.image_label.config(image=self.photo_image, text="")
                 self.btn_scan.config(state=tk.NORMAL, bg="#4CAF50", fg="white")
                 self.btn_segment.config(state=tk.NORMAL, bg="#2196F3", fg="white")
+                self.btn_gemini.config(state=tk.NORMAL, bg="#9C27B0", fg="white")
                 self.log("Image loaded successfully.")
                 
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to load image: {e}")
 
     def log(self, message):
-        self.text_output.insert(tk.END, f"\n{message}")
+        self.text_output.insert(tk.END, f"\n{message}", "right")
         self.text_output.see(tk.END)
 
     def process_image(self, run_ocr=True):
@@ -87,15 +95,13 @@ class AutoGraderApp:
             # return_annotated=True to get the image with segmentation boxes
             text, annotated_image, boxes_data = HebrewOCR.predict_full_page(self.current_image, return_annotated=True, run_ocr=run_ocr)
             
-            # Format text for Tkinter Right-To-Left display
+            # Format text for Tkinter display
             display_text = text
             if run_ocr and text and not text.startswith("["):
-                # Put each word on a new line for debugging word character order
-                display_text = "\n".join(text.split(" "))
                 try:
                     from bidi.algorithm import get_display
-                    # get_display will still work per line
-                    display_text = "\n".join(get_display(line) for line in display_text.split("\n"))
+                    # Apply get_display to the full logical text to handle RTL ordering correctly
+                    display_text = get_display(text)
                 except ImportError:
                     pass
             
@@ -156,6 +162,46 @@ class AutoGraderApp:
             import traceback
             traceback.print_exc()
             messagebox.showerror("HebHTR Error", f"Failed to run HebHTR:\n{e}")
+
+    def run_gemini_ocr(self):
+        if not self.current_image:
+            return
+        
+        self.log("Starting Gemini OCR (Cloud - High Accuracy)...")
+        self.root.update()
+        
+        try:
+            from gemini_wrapper import GeminiOCR
+            ocr = GeminiOCR()
+            text = ocr.predict(self.current_image)
+            
+            # The user reported that characters are correct but word order is reversed.
+            # We reverse only the word order for each line to fix the RTL layout in the UI.
+            processed_lines = []
+            for line in text.split("\n"):
+                words = line.split(" ")
+                processed_lines.append(" ".join(words[::-1]))
+            display_text = "\n".join(processed_lines)
+            
+            self.log("--- Gemini RESULT ---")
+            self.log(display_text)
+            self.log("----------------------")
+            
+            # Save to output folder
+            if hasattr(self, 'current_image_path') and self.current_image_path:
+                img_dir = os.path.dirname(self.current_image_path)
+                out_dir = os.path.join(img_dir, "output")
+                os.makedirs(out_dir, exist_ok=True)
+                
+                base_name = os.path.splitext(os.path.basename(self.current_image_path))[0]
+                out_text_file = os.path.join(out_dir, f"{base_name}_gemini.txt")
+                with open(out_text_file, "w", encoding="utf-8") as f:
+                    f.write(text)
+                self.log(f"Saved Gemini output to: {os.path.basename(out_text_file)}")
+                
+        except Exception as e:
+            self.log(f"Gemini Error: {e}")
+            messagebox.showerror("Gemini Error", f"Failed to run Gemini OCR:\n{e}")
 
 if __name__ == "__main__":
     root = tk.Tk()
